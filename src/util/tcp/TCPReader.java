@@ -36,9 +36,14 @@ package util.tcp;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.xml.xpath.XPathExpressionException;
 
@@ -66,6 +71,8 @@ public class TCPReader extends Thread{
 	private LinkedBlockingQueue<Tuple<String, String> > queue;
 	private RESTUtil restUtil;
 	private Device device;
+	
+	private final AtomicBoolean isAlive = new AtomicBoolean(true);
 	
 	public TCPReader(String IPAddress, LinkedBlockingQueue<Tuple<String, String> > queue, RESTUtil restUtil){
 		super();
@@ -105,6 +112,19 @@ public class TCPReader extends Thread{
 	
 	public void run(){
 		
+		ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+		executor.scheduleAtFixedRate(() -> {
+			if (!isAlive.compareAndSet(true, false)){
+				//not alive, going nuclear
+				shutdown = true;
+				isInError = true;
+				executor.shutdown();
+			}
+		}, 10, 10, TimeUnit.SECONDS);
+		
+		
+		PrintWriter pw = null;
+		
 		while(!shutdown){
 			
 			try (Socket socket = new Socket()) {
@@ -118,7 +138,7 @@ public class TCPReader extends Thread{
 						System.out.println(Util.getCurrentTime() + " [" + IPAddress + "] connection established.");
 						in = new BufferedInputStream(socket.getInputStream());
 						TimerUtil.reset(getClass().getName());
-						
+						pw = new PrintWriter(socket.getOutputStream());
 						if(isInError){
 							startDevice();
 						}
@@ -192,7 +212,9 @@ public class TCPReader extends Thread{
 					}
 						
 					if(length>0){
-							
+						isAlive.set(true);
+						pw.println("OK");
+						
 						byte[] buf = new byte[length];
 						int bufferLength = length>BUFFER_LENGTH?BUFFER_LENGTH:length;
 						int l=-1;
@@ -224,10 +246,12 @@ public class TCPReader extends Thread{
 							queue.notify();
 						}
 						
-						
 						if(!serveRequest){
 							continue;
 						}
+					} else {
+						isAlive.set(true);
+						pw.println("OK");
 					}
 					
 				}						
@@ -266,6 +290,8 @@ public class TCPReader extends Thread{
 				}
 			} finally {
 				System.out.println(Util.getCurrentTime() + " End of TCPReader.");
+				executor.shutdown();
+				if (pw != null) pw.close();
 			}
 		} 
 	}
