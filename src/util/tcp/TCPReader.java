@@ -63,7 +63,7 @@ public class TCPReader extends Thread{
 	private static int maxQueueSize = DEFAULT_MAX_QUEUE_SIZE;
 	
 	private boolean shutdown=false;
-	private boolean isInError;
+	private volatile boolean isInError;
 	private boolean firstRun=true;
 	private BufferedInputStream in;
 
@@ -113,17 +113,6 @@ public class TCPReader extends Thread{
 	public void run(){
 		
 		ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
-		executor.scheduleAtFixedRate(() -> {
-			if (!isAlive.compareAndSet(true, false)){
-				//not alive, going nuclear
-				shutdown = true;
-				isInError = true;
-				executor.shutdown();
-			}
-		}, 10, 10, TimeUnit.SECONDS);
-		
-		
-		PrintWriter pw = null;
 		
 		while(!shutdown){
 			
@@ -138,9 +127,21 @@ public class TCPReader extends Thread{
 						System.out.println(Util.getCurrentTime() + " [" + IPAddress + "] connection established.");
 						in = new BufferedInputStream(socket.getInputStream());
 						TimerUtil.reset(getClass().getName());
-						pw = new PrintWriter(socket.getOutputStream());
 						if(isInError){
 							startDevice();
+						}
+						if (firstRun) {
+							executor.scheduleAtFixedRate(() -> {
+								if (!isAlive.compareAndSet(true, false) && !isInError){
+									isInError = true;
+									try {
+										System.out.println(Util.getCurrentTime() + " [" + IPAddress + "] connection not alive, closing...");
+										socket.close();
+									} catch (Exception e) {
+										System.out.println(Util.getCurrentTime() + " [" + IPAddress + "] IOException receiving message: " + e.getMessage());
+									}
+								}
+							}, 10, 10, TimeUnit.SECONDS);
 						}
 						
 						isInError=false;
@@ -213,7 +214,6 @@ public class TCPReader extends Thread{
 						
 					if(length>0){
 						isAlive.set(true);
-						pw.println("OK");
 						
 						byte[] buf = new byte[length];
 						int bufferLength = length>BUFFER_LENGTH?BUFFER_LENGTH:length;
@@ -251,7 +251,6 @@ public class TCPReader extends Thread{
 						}
 					} else {
 						isAlive.set(true);
-						pw.println("OK");
 					}
 					
 				}						
@@ -288,12 +287,11 @@ public class TCPReader extends Thread{
 					System.out.println(Util.getCurrentTime() + " [" + IPAddress + "] InterruptedException caught. Terminating thread.");
 					break;
 				}
-			} finally {
-				System.out.println(Util.getCurrentTime() + " End of TCPReader.");
-				executor.shutdown();
-				if (pw != null) pw.close();
 			}
 		} 
+		System.out.println(Util.getCurrentTime() + " End of TCPReader.");
+		if (executor != null)
+			executor.shutdown();
 	}
 	
 	public String readLine(InputStream in, String charset, boolean onlyReadable, boolean trimLine) throws IOException {
