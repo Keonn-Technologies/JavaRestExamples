@@ -23,6 +23,15 @@ import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 
+import org.apache.http.HttpResponse;
+import org.apache.http.auth.AuthScope;
+import org.apache.http.auth.UsernamePasswordCredentials;
+import org.apache.http.client.CredentialsProvider;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.util.EntityUtils;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -145,45 +154,32 @@ public class RESTUtil {
 	 * @return The response as a string
 	 * @throws IOException
 	 */
-	public String getFileFromURL(URL devicesURL) throws IOException {
+	public String getFileFromURL(URL url) throws IOException {
 
-		InputStream is = devicesURL.openStream();
-		InputStreamReader fr = null;
+		String host = url.getHost();
+	    int port = url.getPort() == -1 ? 80 : url.getPort();
 
-		try {
-			fr = new InputStreamReader(is);
-			BufferedReader br = new BufferedReader(fr);
+	    CredentialsProvider credsProvider = new BasicCredentialsProvider();
+	    credsProvider.setCredentials(
+	            new AuthScope(host, port),
+	            new UsernamePasswordCredentials("admin", "admin")
+	    );
 
-			char buff[] = new char[65536];
-			StringBuffer sb = new StringBuffer();
-			int count;
+	    try (CloseableHttpClient httpClient = HttpClients.custom()
+	            .setDefaultCredentialsProvider(credsProvider)
+	            .build()) {
 
-			do {
-				count = br.read(buff);
-				if (count != -1)
-					sb.append(buff, 0, count);
-			} while (count != -1);
+	        HttpGet request = new HttpGet(url.toString());
 
-			return sb.toString();
+	        HttpResponse response = httpClient.execute(request);
+	        int statusCode = response.getStatusLine().getStatusCode();
 
-		} catch (Exception exx) {
-			exx.printStackTrace();
-			return null;
-		} finally {
-			try {
-				if (fr != null)
-					fr.close();
-			} catch (Exception exx2) {
-				exx2.printStackTrace();
-			}
+	        if (statusCode == 401) {
+	            throw new RuntimeException("Unauthorized: Check username and password");
+	        }
 
-			try {
-				if (is != null)
-					is.close();
-			} catch (Exception exx2) {
-				exx2.printStackTrace();
-			}
-		}	
+	        return EntityUtils.toString(response.getEntity(), "UTF-8");
+	    }
 	}
 	
 	/**
